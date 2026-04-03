@@ -1,0 +1,457 @@
+<?xml version="1.0" ?>
+<mavlink>
+  <version>2</version>
+  <dialect>200</dialect>
+  <enums>
+    <enum name="MAV_TYPE">
+      <description>Type of MAV (micro air vehicle).</description>
+      <entry value="0" name="MAV_TYPE_GENERIC">           <description
+                >Generic micro air vehicle.</description></entry>
+      <entry value="2" name="MAV_TYPE_QUADROTOR">         <description
+                >Quadrotor.</description></entry>
+      <entry value="27" name="MAV_TYPE_ONBOARD_CONTROLLER"><description
+                >Onboard companion controller.</description></entry>
+    </enum>
+    <enum name="MAV_AUTOPILOT">
+      <description>Micro air vehicle / autopilot class.</description>
+      <entry value="0" name="MAV_AUTOPILOT_GENERIC">   <description
+                >Generic autopilot, full support for everything.</description></entry>
+      <entry value="8" name="MAV_AUTOPILOT_INVALID">   <description
+                >No valid autopilot (e.g. a GCS or MAVLink component).</description></entry>
+    </enum>
+    <enum name="MAV_MODE_FLAG" bitmask="true">
+      <description>These flags encode the MAV mode.</description>
+      <entry value="128" name="MAV_MODE_FLAG_SAFETY_ARMED">        <description
+                >0b10000000 MAV safety set to armed.</description></entry>
+      <entry value="64" name="MAV_MODE_FLAG_MANUAL_INPUT_ENABLED"><description
+                >0b01000000 remote control input is enabled.</description></entry>
+      <entry value="4" name="MAV_MODE_FLAG_GUIDED_ENABLED">      <description
+                >0b00000100 guided mode enabled, system flies waypoints / mission items.</description></entry>
+      <entry value="1" name="MAV_MODE_FLAG_CUSTOM_MODE_ENABLED"> <description
+                >0b00000001 system has a custom mode active.</description></entry>
+    </enum>
+    <enum name="MAV_STATE">
+      <description>States of the vehicle.</description>
+      <entry value="0" name="MAV_STATE_UNINIT">    <description
+                >Uninitialized system.</description></entry>
+      <entry value="1" name="MAV_STATE_BOOT">      <description
+                >System is booting up.</description></entry>
+      <entry value="2" name="MAV_STATE_CALIBRATING"><description
+                >System is calibrating.</description></entry>
+      <entry value="3" name="MAV_STATE_STANDBY">   <description
+                >System is grounded and on standby.</description></entry>
+      <entry value="4" name="MAV_STATE_ACTIVE">    <description
+                >System is active and might be already airborne.</description></entry>
+      <entry value="5" name="MAV_STATE_CRITICAL">  <description
+                >System is in a non-normal flight mode.</description></entry>
+      <entry value="6" name="MAV_STATE_EMERGENCY"> <description
+                >System is in a non-normal flight mode – it lost control over parts or over the whole airframe.</description></entry>
+    </enum>
+    <enum name="MAV_FRAME">
+      <description>Coordinate frames used by MAVLink.</description>
+      <entry value="1" name="MAV_FRAME_LOCAL_NED">      <description
+                >NED local tangent frame (x: north, y: east, z: down).</description></entry>
+      <entry value="7" name="MAV_FRAME_LOCAL_OFFSET_NED"><description
+                >NED local tangent frame, offset from vehicle position.</description></entry>
+      <entry value="8" name="MAV_FRAME_BODY_NED">       <description
+                >Same as MAV_FRAME_LOCAL_NED rotated 90 degrees clockwise around z-axis.</description></entry>
+      <entry value="9" name="MAV_FRAME_BODY_OFFSET_NED"><description
+                >Offset in body frame, rotated.</description></entry>
+    </enum>
+    <enum name="POSITION_TARGET_TYPEMASK" bitmask="true">
+      <description
+            >Bitmask to indicate which dimensions should be ignored by the vehicle.</description>
+      <entry
+                value="1"
+                name="POSITION_TARGET_TYPEMASK_X_IGNORE"
+            >          <description>Ignore position x.</description></entry>
+      <entry
+                value="2"
+                name="POSITION_TARGET_TYPEMASK_Y_IGNORE"
+            >          <description>Ignore position y.</description></entry>
+      <entry
+                value="4"
+                name="POSITION_TARGET_TYPEMASK_Z_IGNORE"
+            >          <description>Ignore position z.</description></entry>
+      <entry
+                value="8"
+                name="POSITION_TARGET_TYPEMASK_VX_IGNORE"
+            >         <description>Ignore velocity x.</description></entry>
+      <entry
+                value="16"
+                name="POSITION_TARGET_TYPEMASK_VY_IGNORE"
+            >         <description>Ignore velocity y.</description></entry>
+      <entry
+                value="32"
+                name="POSITION_TARGET_TYPEMASK_VZ_IGNORE"
+            >         <description>Ignore velocity z.</description></entry>
+      <entry
+                value="64"
+                name="POSITION_TARGET_TYPEMASK_AX_IGNORE"
+            >         <description>Ignore acceleration x.</description></entry>
+      <entry
+                value="128"
+                name="POSITION_TARGET_TYPEMASK_AY_IGNORE"
+            >         <description>Ignore acceleration y.</description></entry>
+      <entry
+                value="256"
+                name="POSITION_TARGET_TYPEMASK_AZ_IGNORE"
+            >         <description>Ignore acceleration z.</description></entry>
+      <entry
+                value="512"
+                name="POSITION_TARGET_TYPEMASK_FORCE_SET"
+            >         <description
+                >Use force instead of acceleration.</description></entry>
+      <entry
+                value="1024"
+                name="POSITION_TARGET_TYPEMASK_YAW_IGNORE"
+            >        <description>Ignore yaw.</description></entry>
+      <entry
+                value="2048"
+                name="POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE"
+            >   <description>Ignore yaw rate.</description></entry>
+    </enum>
+    <enum name="ATTITUDE_TARGET_TYPEMASK" bitmask="true">
+      <description
+            >Bitmask to indicate which dimensions should be ignored by the vehicle.</description>
+      <entry
+                value="1"
+                name="ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE"
+            > <description>Ignore roll rate.</description></entry>
+      <entry
+                value="2"
+                name="ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE"
+            ><description>Ignore pitch rate.</description></entry>
+      <entry
+                value="4"
+                name="ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE"
+            >  <description>Ignore yaw rate.</description></entry>
+      <entry
+                value="32"
+                name="ATTITUDE_TARGET_TYPEMASK_THRUST_BODY_SET"
+            >        <description
+                >Use 3D body thrust setpoint instead of throttle.</description></entry>
+      <entry
+                value="64"
+                name="ATTITUDE_TARGET_TYPEMASK_THROTTLE_IGNORE"
+            >        <description>Ignore throttle.</description></entry>
+      <entry
+                value="128"
+                name="ATTITUDE_TARGET_TYPEMASK_ATTITUDE_IGNORE"
+            >        <description>Ignore attitude.</description></entry>
+    </enum>
+    <enum name="MAV_ESTIMATOR_TYPE">
+      <description>Estimator types.</description>
+      <entry value="0" name="MAV_ESTIMATOR_TYPE_UNKNOWN">    <description
+                >Unknown type of the estimator.</description></entry>
+      <entry value="1" name="MAV_ESTIMATOR_TYPE_NAIVE">      <description
+                >This is a naive estimator without any real covariance feedback.</description></entry>
+      <entry value="2" name="MAV_ESTIMATOR_TYPE_VISION">     <description
+                >Computer vision based estimate.</description></entry>
+      <entry value="3" name="MAV_ESTIMATOR_TYPE_VIO">        <description
+                >Visual-inertial estimate.</description></entry>
+      <entry value="4" name="MAV_ESTIMATOR_TYPE_GPS">        <description
+                >Plain GPS estimate.</description></entry>
+      <entry value="5" name="MAV_ESTIMATOR_TYPE_GPS_INS">    <description
+                >Estimator integrating GPS and inertial sensing.</description></entry>
+      <entry value="6" name="MAV_ESTIMATOR_TYPE_MOCAP">      <description
+                >Estimate from external motion capturing system.</description></entry>
+      <entry value="7" name="MAV_ESTIMATOR_TYPE_LIDAR">      <description
+                >Estimator based on lidar sensor input.</description></entry>
+      <entry value="8" name="MAV_ESTIMATOR_TYPE_AUTOPILOT">  <description
+                >Estimator on autopilot.</description></entry>
+    </enum>
+  </enums>
+  <messages>
+    <message id="0" name="HEARTBEAT">
+      <description>
+        The heartbeat message shows that a system or component is present and responding.
+        Emitted by the simulator at 1 Hz to allow the client to detect connection loss.
+      </description>
+      <field type="uint32_t" name="custom_mode">
+        A bitfield for use for autopilot-specific flags.
+      </field>
+      <field type="uint8_t" name="type" enum="MAV_TYPE">
+        Vehicle or component type. For the simulator this will be MAV_TYPE_QUADROTOR or MAV_TYPE_GENERIC.
+      </field>
+      <field type="uint8_t" name="autopilot" enum="MAV_AUTOPILOT">
+        Autopilot type / class. Use MAV_AUTOPILOT_GENERIC for the simulator.
+      </field>
+      <field
+                type="uint8_t"
+                name="base_mode"
+                enum="MAV_MODE_FLAG"
+                display="bitmask"
+            >
+        System mode bitmap.
+      </field>
+      <field type="uint8_t" name="system_status" enum="MAV_STATE">
+        System status flag.
+      </field>
+      <field type="uint8_t" name="mavlink_version">
+        MAVLink version, not writable by user, gets added by protocol because of magic data type: uint8_t_mavlink_version. Always 3 for v2.
+      </field>
+    </message>
+    <message id="30" name="ATTITUDE">
+      <description>
+        The attitude in the aeronautical frame (right-hand, Z-down / x-front, y-right).
+        Sent by the simulator to convey current vehicle orientation and angular rates.
+      </description>
+      <field type="uint32_t" name="time_boot_ms" units="ms">
+        Timestamp (time since system boot).
+      </field>
+      <field type="float" name="roll" units="rad">
+        Roll angle (-pi..+pi).
+      </field>
+      <field type="float" name="pitch" units="rad">
+        Pitch angle (-pi..+pi).
+      </field>
+      <field type="float" name="yaw" units="rad">
+        Yaw angle (-pi..+pi).
+      </field>
+      <field type="float" name="rollspeed" units="rad/s">
+        Roll angular speed.
+      </field>
+      <field type="float" name="pitchspeed" units="rad/s">
+        Pitch angular speed.
+      </field>
+      <field type="float" name="yawspeed" units="rad/s">
+        Yaw angular speed.
+      </field>
+    </message>
+    <message id="82" name="SET_ATTITUDE_TARGET">
+      <description>
+        Sets a desired vehicle attitude. Used by the contestant control software to
+        command the simulator. The type_mask field selects which sub-fields are active.
+      </description>
+      <field type="uint32_t" name="time_boot_ms" units="ms">
+        Timestamp (time since system boot). Receivers should ignore messages with an incorrect timestamp.
+      </field>
+      <field type="uint8_t" name="target_system">
+        System ID of the target vehicle (simulator's system ID).
+      </field>
+      <field type="uint8_t" name="target_component">
+        Component ID of the target (e.g. autopilot component).
+      </field>
+      <field
+                type="uint8_t"
+                name="type_mask"
+                enum="ATTITUDE_TARGET_TYPEMASK"
+                display="bitmask"
+            >
+        Bitmap to indicate which fields should be ignored.
+      </field>
+      <field type="float[4]" name="q">
+        Attitude quaternion (w, x, y, z order, zero-rotation is {1, 0, 0, 0}).
+      </field>
+      <field type="float" name="body_roll_rate" units="rad/s">
+        Body roll rate.
+      </field>
+      <field type="float" name="body_pitch_rate" units="rad/s">
+        Body pitch rate.
+      </field>
+      <field type="float" name="body_yaw_rate" units="rad/s">
+        Body yaw rate.
+      </field>
+      <field type="float" name="thrust">
+        Collective thrust, normalised [0, 1] (-1..1 for vehicles capable of reverse thrust).
+      </field>
+    </message>
+
+    <message id="84" name="SET_POSITION_TARGET_LOCAL_NED">
+      <description>
+        Sets a desired vehicle position in a local north-east-down coordinate frame.
+        Used by the contestant control software to send position / velocity / acceleration
+        setpoints to the simulator. Use type_mask to ignore sub-fields.
+      </description>
+      <field type="uint32_t" name="time_boot_ms" units="ms">
+        Timestamp (time since system boot).
+      </field>
+      <field type="uint8_t" name="target_system">
+        System ID of the target vehicle.
+      </field>
+      <field type="uint8_t" name="target_component">
+        Component ID of the target.
+      </field>
+      <field type="uint8_t" name="coordinate_frame" enum="MAV_FRAME">
+        Valid options are: MAV_FRAME_LOCAL_NED, MAV_FRAME_LOCAL_OFFSET_NED,
+        MAV_FRAME_BODY_NED, MAV_FRAME_BODY_OFFSET_NED.
+      </field>
+      <field
+                type="uint16_t"
+                name="type_mask"
+                enum="POSITION_TARGET_TYPEMASK"
+                display="bitmask"
+            >
+        Bitmap to indicate which dimensions should be ignored.
+      </field>
+      <field type="float" name="x" units="m">
+        X position in NED frame (positive north).
+      </field>
+      <field type="float" name="y" units="m">
+        Y position in NED frame (positive east).
+      </field>
+      <field type="float" name="z" units="m">
+        Z position in NED frame (positive down). Use negative values for altitude above ground.
+      </field>
+      <field type="float" name="vx" units="m/s">
+        X velocity in NED frame.
+      </field>
+      <field type="float" name="vy" units="m/s">
+        Y velocity in NED frame.
+      </field>
+      <field type="float" name="vz" units="m/s">
+        Z velocity in NED frame.
+      </field>
+      <field type="float" name="afx" units="m/s/s">
+        X acceleration or force (if bit 10 of type_mask is set) in NED frame.
+      </field>
+      <field type="float" name="afy" units="m/s/s">
+        Y acceleration or force in NED frame.
+      </field>
+      <field type="float" name="afz" units="m/s/s">
+        Z acceleration or force in NED frame.
+      </field>
+      <field type="float" name="yaw" units="rad">
+        Yaw setpoint.
+      </field>
+      <field type="float" name="yaw_rate" units="rad/s">
+        Yaw rate setpoint.
+      </field>
+    </message>
+    <message id="105" name="HIGHRES_IMU">
+      <description>
+        The IMU readings in SI units in NED body frame.
+        Sent by the simulator to convey current vehicle sensor state.
+      </description>
+      <field type="uint64_t" name="time_usec" units="us">
+        Timestamp (UNIX Epoch time or time since system boot). Microseconds.
+      </field>
+      <field type="float" name="xacc" units="m/s/s">
+        X acceleration.
+      </field>
+      <field type="float" name="yacc" units="m/s/s">
+        Y acceleration.
+      </field>
+      <field type="float" name="zacc" units="m/s/s">
+        Z acceleration.
+      </field>
+      <field type="float" name="xgyro" units="rad/s">
+        Angular speed around X axis.
+      </field>
+      <field type="float" name="ygyro" units="rad/s">
+        Angular speed around Y axis.
+      </field>
+      <field type="float" name="zgyro" units="rad/s">
+        Angular speed around Z axis.
+      </field>
+      <field type="float" name="xmag" units="gauss">
+        X magnetic field.
+      </field>
+      <field type="float" name="ymag" units="gauss">
+        Y magnetic field.
+      </field>
+      <field type="float" name="zmag" units="gauss">
+        Z magnetic field.
+      </field>
+      <field type="float" name="abs_pressure" units="hPa">
+        Absolute pressure.
+      </field>
+      <field type="float" name="diff_pressure" units="hPa">
+        Differential pressure.
+      </field>
+      <field type="float" name="pressure_alt" units="m">
+        Altitude calculated from pressure.
+      </field>
+      <field type="float" name="temperature" units="degC">
+        Temperature.
+      </field>
+      <field type="uint16_t" name="fields_updated" display="bitmask">
+        Bitmap for fields that have updated since last message; bit 0 = xacc, bit 1 = yacc,
+        bit 2 = zacc, bit 3 = xgyro, bit 4 = ygyro, bit 5 = zgyro, bit 6 = xmag, bit 7 = ymag,
+        bit 8 = zmag, bit 9 = abs_pressure, bit 10 = diff_pressure, bit 11 = pressure_alt,
+        bit 12 = temperature.
+      </field>
+      <field type="uint8_t" name="id">
+        Id. Ids are numbered from 0 and map to IMUs numbered from 1 (e.g. IMU1 is id=0).
+      </field>
+    </message>
+    <message id="111" name="TIMESYNC">
+      <description>
+        Time synchronisation message. The simulator sends this with tc1=0 to initiate
+        a sync request. The client echoes it back with tc1 set to the current timestamp,
+        allowing the simulator to compute clock offset. Both sides repeat the exchange
+        periodically (recommended: every 5 s).
+      </description>
+      <field type="int64_t" name="tc1" units="ns">
+        Time sync timestamp 1. Set to 0 on the initiating (request) message; set to
+        the local timestamp in nanoseconds on the response.
+      </field>
+      <field type="int64_t" name="ts1" units="ns">
+        Time sync timestamp 2. Set to local timestamp in nanoseconds when the message
+        is sent.
+      </field>
+    </message>
+    <message id="331" name="ODOMETRY">
+      <description>
+        Odometry message encoding the position and velocity in a given reference frame.
+        Sent by the simulator to provide ground-truth or estimated state for the vehicle.
+      </description>
+      <field type="uint64_t" name="time_usec" units="us">
+        Timestamp (UNIX Epoch time or time since system boot). Microseconds.
+      </field>
+      <field type="uint8_t" name="frame_id" enum="MAV_FRAME">
+        Coordinate frame of reference for the pose data.
+      </field>
+      <field type="uint8_t" name="child_frame_id" enum="MAV_FRAME">
+        Coordinate frame of reference for the velocity data.
+      </field>
+      <field type="float" name="x" units="m">
+        X position in frame_id.
+      </field>
+      <field type="float" name="y" units="m">
+        Y position in frame_id.
+      </field>
+      <field type="float" name="z" units="m">
+        Z position in frame_id.
+      </field>
+      <field type="float[4]" name="q">
+        Quaternion components (w, x, y, z order) representing vehicle orientation
+        in the reference frame.
+      </field>
+      <field type="float" name="vx" units="m/s">
+        X linear speed in child_frame_id.
+      </field>
+      <field type="float" name="vy" units="m/s">
+        Y linear speed in child_frame_id.
+      </field>
+      <field type="float" name="vz" units="m/s">
+        Z linear speed in child_frame_id.
+      </field>
+      <field type="float" name="rollspeed" units="rad/s">
+        Roll angular speed in child_frame_id.
+      </field>
+      <field type="float" name="pitchspeed" units="rad/s">
+        Pitch angular speed in child_frame_id.
+      </field>
+      <field type="float" name="yawspeed" units="rad/s">
+        Yaw angular speed in child_frame_id.
+      </field>
+      <field type="float[21]" name="pose_covariance">
+        Row-major representation of a 6×6 pose cross-covariance matrix upper right triangle
+        (states: x, y, z, roll, pitch, yaw). Set to NaN if unknown.
+      </field>
+      <field type="float[21]" name="velocity_covariance">
+        Row-major representation of a 6×6 velocity cross-covariance matrix upper right triangle
+        (states: vx, vy, vz, rollspeed, pitchspeed, yawspeed). Set to NaN if unknown.
+      </field>
+      <field type="uint8_t" name="reset_counter">
+        Estimate reset counter. Increases each time the estimate resets in any of the dimensions
+        (position, velocity, attitude). Zero by default. 0-255, rolls over.
+      </field>
+      <field type="int8_t" name="estimator_type" enum="MAV_ESTIMATOR_TYPE">
+        Type of estimator that is providing the odometry.
+      </field>
+    </message>
+  </messages>
+</mavlink>
