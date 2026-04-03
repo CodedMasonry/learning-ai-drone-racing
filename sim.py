@@ -1,31 +1,12 @@
 """
 Mock MAVLink Vehicle Simulator
-Implements the protocol defined in VADR-TS-001 (Issue 00.01, 2026-03-09):
+Protocol: VADR-TS-001 (Issue 00.01, 2026-03-09)
 
-  HEARTBEAT             Simulator → Client   Connection status (≥ 2 Hz)
-  ATTITUDE              Simulator → Client   Vehicle attitude
-  HIGHRES_IMU           Simulator → Client   IMU data
-  ODOMETRY              Simulator → Client   Position/velocity
-  TIMESYNC              Simulator → Client   Timing
-  SET_POSITION_TARGET_LOCAL_NED  Client → Simulator  Position control
-  SET_ATTITUDE_TARGET            Client → Simulator  Attitude control
+Outbound (sim → client):  HEARTBEAT (≥2 Hz), ATTITUDE, HIGHRES_IMU, ODOMETRY, TIMESYNC
+Inbound  (client → sim):  SET_POSITION_TARGET_LOCAL_NED, SET_ATTITUDE_TARGET
 
-Heartbeat protocol (§4.4, §5.2, §6):
-  - Simulator begins sending HEARTBEAT immediately on bind (≥ 2 Hz), before
-    any client packet arrives, so wait_heartbeat() on the client side unblocks
-    as soon as the transport is ready.
-  - Client is required to send its own HEARTBEAT (§5.2 "maintain heartbeat
-    messages"). The simulator tracks client heartbeat liveness and emits a
-    warning when the client goes silent beyond CLIENT_HB_TIMEOUT_S seconds.
-  - Telemetry (ATTITUDE, HIGHRES_IMU, ODOMETRY) is withheld until the
-    simulator has learnt the client's UDP address (i.e. received at least one
-    packet). HEARTBEAT is exempt from this gate so the client can discover
-    the sim at any time.
-
-Usage:
-    python mock_vehicle.py
-
-Start this BEFORE your controller.
+HEARTBEAT is sent unconditionally so client wait_heartbeat() unblocks on transport ready.
+Telemetry is gated on _client_connected (udpin learns remote addr from first rx datagram).
 """
 
 import argparse
@@ -41,26 +22,13 @@ os.environ["MAVLINK20"] = "1"
 from pymavlink import mavutil  # noqa: E402
 from pymavlink.dialects.v20 import common as mavlink_dialect  # noqa: E402
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-# Warn if no client HEARTBEAT has been received for this many seconds.
-# Per spec §5.2 the client must maintain heartbeats; we allow some slack.
 CLIENT_HB_TIMEOUT_S: float = 5.0
-
-# Minimum simulator heartbeat rate required by spec §4.4.
 MIN_HB_HZ: int = 2
-
-
-# ---------------------------------------------------------------------------
-# Simulated vehicle state
-# ---------------------------------------------------------------------------
 
 
 @dataclass
 class VehicleState:
-    # Attitude (radians)
+    # Attitude (rad)
     roll: float = 0.0
     pitch: float = 0.0
     yaw: float = 0.0
@@ -68,12 +36,12 @@ class VehicleState:
     pitchspeed: float = 0.0
     yawspeed: float = 0.0
 
-    # Position in NED (metres)
+    # Position NED (m)
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
 
-    # Velocity in NED (m/s)
+    # Velocity NED (m/s)
     vx: float = 0.0
     vy: float = 0.0
     vz: float = 0.0
@@ -81,7 +49,7 @@ class VehicleState:
     # IMU
     xacc: float = 0.0
     yacc: float = 0.0
-    zacc: float = -9.81  # gravity (m/s²)
+    zacc: float = -9.81
     xgyro: float = 0.0
     ygyro: float = 0.0
     zgyro: float = 0.0
@@ -91,7 +59,7 @@ class VehicleState:
     abs_pressure: float = 101325.0
     temperature: float = 25.0
 
-    # Control targets (written by incoming command handler)
+    # Command targets — written by recv thread, read by telemetry thread
     target_x: float = 0.0
     target_y: float = 0.0
     target_z: float = 0.0
@@ -100,18 +68,16 @@ class VehicleState:
     target_yaw: float = 0.0
     target_thrust: float = 0.5
 
-    # Bookkeeping
     last_cmd_type: str = "none"
     last_cmd_time: float = field(default_factory=time.time)
 
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def update(self, dt: float):
-        """Very simple first-order dynamics so telemetry looks alive."""
+        """First-order dynamics: state drifts toward targets each tick."""
         with self._lock:
-            alpha = min(1.0, dt * 2.0)  # smoothing factor
+            alpha = min(1.0, dt * 2.0)
 
-            # Position control: drift toward target
             self.x += (self.target_x - self.x) * alpha * 0.1
             self.y += (self.target_y - self.y) * alpha * 0.1
             self.z += (self.target_z - self.z) * alpha * 0.1
@@ -120,7 +86,6 @@ class VehicleState:
             self.vy = (self.target_y - self.y) * 0.5
             self.vz = (self.target_z - self.z) * 0.5
 
-            # Attitude control
             self.roll += (self.target_roll - self.roll) * alpha * 0.3
             self.pitch += (self.target_pitch - self.pitch) * alpha * 0.3
             self.yaw += (self.target_yaw - self.yaw) * alpha * 0.1
@@ -129,7 +94,6 @@ class VehicleState:
             self.pitchspeed = (self.target_pitch - self.pitch) * 0.3
             self.yawspeed = (self.target_yaw - self.yaw) * 0.1
 
-            # IMU: add tiny noise
             import random
 
             self.xacc = random.gauss(0.0, 0.01)
@@ -140,19 +104,8 @@ class VehicleState:
             self.zgyro = random.gauss(self.yawspeed, 0.001)
 
 
-# ---------------------------------------------------------------------------
-# Heartbeat liveness tracker
-# ---------------------------------------------------------------------------
-
-
 class HeartbeatMonitor:
-    """
-    Tracks client heartbeat liveness per §5.2.
-
-    The client is considered *alive* once its first HEARTBEAT has been
-    received and *stale* if more than CLIENT_HB_TIMEOUT_S seconds have
-    elapsed since the last one.
-    """
+    """Client heartbeat liveness tracker (§5.2). Thread-safe."""
 
     def __init__(self, timeout_s: float = CLIENT_HB_TIMEOUT_S):
         self._timeout_s = timeout_s
@@ -162,7 +115,6 @@ class HeartbeatMonitor:
         self._lock = threading.Lock()
 
     def record(self, msg) -> None:
-        """Call when a HEARTBEAT is received from the client."""
         with self._lock:
             self._last_hb_time = time.time()
             self._stale_warned = False
@@ -181,17 +133,13 @@ class HeartbeatMonitor:
 
     @property
     def is_alive(self) -> bool:
-        """True if a heartbeat has been seen recently."""
         with self._lock:
             if self._last_hb_time is None:
                 return False
             return (time.time() - self._last_hb_time) < self._timeout_s
 
     def check_and_warn(self) -> None:
-        """
-        Emit a warning (once per stale period) if the client heartbeat has
-        timed out.  Resets when a new heartbeat arrives.
-        """
+        """Emit a once-per-stale-period warning; resets on next heartbeat."""
         with self._lock:
             if not self._ever_received:
                 return
@@ -205,11 +153,6 @@ class HeartbeatMonitor:
                 self._stale_warned = True
 
 
-# ---------------------------------------------------------------------------
-# Simulator
-# ---------------------------------------------------------------------------
-
-
 class MockVehicle:
     def __init__(
         self,
@@ -219,11 +162,10 @@ class MockVehicle:
         timesync_hz: int = 1,
         verbose: bool = True,
     ):
-        # Clamp heartbeat rate to spec minimum (§4.4)
         if heartbeat_hz < MIN_HB_HZ:
             print(
-                f"[SIM] WARNING: heartbeat_hz={heartbeat_hz} is below the "
-                f"spec minimum of {MIN_HB_HZ} Hz (§4.4). Clamping."
+                f"[SIM] WARNING: heartbeat_hz={heartbeat_hz} below spec minimum "
+                f"{MIN_HB_HZ} Hz (§4.4). Clamping."
             )
             heartbeat_hz = MIN_HB_HZ
 
@@ -236,16 +178,12 @@ class MockVehicle:
         self._running = False
         self._conn: mavutil.mavfile
 
-        # Rate counters
         self._cmd_count = 0
         self._stats_time = time.time()
 
-        # Set when the first packet arrives from the client, gates telemetry.
-        # HEARTBEAT is NOT gated — it is sent immediately so the client's
-        # wait_heartbeat() can unblock as soon as the transport path exists.
+        # Gates telemetry until udpin learns the client's remote address.
+        # HEARTBEAT bypasses this gate — see _heartbeat_loop.
         self._client_connected = threading.Event()
-
-        # Heartbeat liveness monitor
         self._hb_monitor = HeartbeatMonitor()
 
     # ------------------------------------------------------------------
@@ -264,7 +202,6 @@ class MockVehicle:
         )
         self._running = True
 
-        # Threads
         threading.Thread(target=self._recv_loop, daemon=True, name="recv").start()
         threading.Thread(target=self._telemetry_loop, daemon=True, name="telem").start()
         threading.Thread(
@@ -280,7 +217,7 @@ class MockVehicle:
             self._running = False
 
     # ------------------------------------------------------------------
-    # Receive loop — handles incoming client messages
+    # Recv
     # ------------------------------------------------------------------
 
     def _recv_loop(self):
@@ -289,8 +226,6 @@ class MockVehicle:
             if msg is None:
                 continue
 
-            # First packet received — sim now knows the client's UDP address,
-            # which unlocks the telemetry gate.
             if not self._client_connected.is_set():
                 print("[SIM] Client address learned — telemetry stream starting.")
                 self._client_connected.set()
@@ -304,18 +239,12 @@ class MockVehicle:
             elif msg_type == "SET_ATTITUDE_TARGET":
                 self._handle_attitude_target(msg)
             elif msg_type == "BAD_DATA":
-                pass  # ignore framing noise
+                pass
             else:
                 if self.verbose:
                     print(f"[SIM] Unhandled message: {msg_type}")
 
     def _handle_heartbeat(self, msg):
-        """
-        Process an incoming client HEARTBEAT (§5.2).
-
-        Records liveness and logs on first contact and on reconnect after a
-        stale period.
-        """
         self._hb_monitor.record(msg)
         if self.verbose:
             print(
@@ -341,8 +270,8 @@ class MockVehicle:
             )
 
     def _handle_attitude_target(self, msg):
-        # Quaternion → Euler (simple approximation for display)
-        q = msg.q  # [w, x, y, z]
+        # Quaternion [w, x, y, z] → Euler for state update and logging
+        q = msg.q
         roll = math.atan2(
             2 * (q[0] * q[1] + q[2] * q[3]), 1 - 2 * (q[1] ** 2 + q[2] ** 2)
         )
@@ -366,32 +295,22 @@ class MockVehicle:
             )
 
     # ------------------------------------------------------------------
-    # Heartbeat loop — dedicated thread for simulator → client heartbeats
-    #
-    # Per §6 the simulator sends HEARTBEAT *before* the client connects so
-    # that wait_heartbeat() on the client unblocks as soon as the path is
-    # open.  This runs independently of _telemetry_loop and does NOT wait
-    # on _client_connected.
+    # Heartbeat loop — runs independently of telemetry, no addr gate
     # ------------------------------------------------------------------
 
     def _heartbeat_loop(self):
         interval = 1.0 / self.hb_hz
-        print(
-            f"[SIM] Heartbeat loop started ({self.hb_hz} Hz, interval={interval:.3f}s)."
-        )
+        print(f"[SIM] Heartbeat loop started ({self.hb_hz} Hz).")
         while self._running:
             loop_start = time.time()
             self._send_heartbeat()
-            # Also check client liveness each heartbeat cycle (cheap)
             self._hb_monitor.check_and_warn()
-            elapsed = time.time() - loop_start
-            sleep_t = interval - elapsed
+            sleep_t = interval - (time.time() - loop_start)
             if sleep_t > 0:
                 time.sleep(sleep_t)
 
     # ------------------------------------------------------------------
-    # Telemetry loop — sends all outbound telemetry at configured rate
-    # (gated on having learnt the client's UDP address)
+    # Telemetry loop — gated on _client_connected
     # ------------------------------------------------------------------
 
     def _telemetry_loop(self):
@@ -399,9 +318,6 @@ class MockVehicle:
         ts_every = max(1, self.send_hz // self.ts_hz)
         tick = 0
 
-        # Wait until the client's first packet arrives so the UDP stack
-        # knows where to send.  udpin learns the remote address from the
-        # first received datagram.
         print("[SIM] Telemetry loop waiting for client address...")
         self._client_connected.wait()
         print("[SIM] Telemetry loop running.")
@@ -418,23 +334,15 @@ class MockVehicle:
                 self._send_timesync()
 
             tick += 1
-            elapsed = time.time() - loop_start
-            sleep_t = dt - elapsed
+            sleep_t = dt - (time.time() - loop_start)
             if sleep_t > 0:
                 time.sleep(sleep_t)
 
     # ------------------------------------------------------------------
-    # Individual senders
+    # Senders
     # ------------------------------------------------------------------
 
     def _send_heartbeat(self):
-        """
-        Send simulator HEARTBEAT (§4.3, §4.4).
-
-        Sent at ≥ 2 Hz unconditionally — does not wait for client connection
-        so that the client's wait_heartbeat() works before any command is
-        sent (§6 session sequence).
-        """
         self._conn.mav.heartbeat_send(
             type=mavlink_dialect.MAV_TYPE_QUADROTOR,
             autopilot=mavlink_dialect.MAV_AUTOPILOT_GENERIC,
@@ -472,13 +380,12 @@ class MockVehicle:
             diff_pressure=0.0,
             pressure_alt=0.0,
             temperature=s.temperature,
-            fields_updated=0x1FFF,  # all fields valid
+            fields_updated=0x1FFF,
             id=0,
         )
 
     def _send_odometry(self):
         s = self.state
-        # Quaternion from Euler
         cr, sr = math.cos(s.roll / 2), math.sin(s.roll / 2)
         cp, sp = math.cos(s.pitch / 2), math.sin(s.pitch / 2)
         cy, sy = math.cos(s.yaw / 2), math.sin(s.yaw / 2)
@@ -513,11 +420,11 @@ class MockVehicle:
     def _send_timesync(self):
         self._conn.mav.timesync_send(
             tc1=0,
-            ts1=int(time.time() * 1e9),  # nanoseconds
+            ts1=int(time.time() * 1e9),
         )
 
     # ------------------------------------------------------------------
-    # Stats loop
+    # Stats
     # ------------------------------------------------------------------
 
     def _stats_loop(self):
@@ -544,17 +451,8 @@ class MockVehicle:
             self._cmd_count = 0
             self._stats_time = now
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
     def _time_boot_ms(self) -> int:
         return int(time.time() * 1000) & 0xFFFFFFFF
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 
 def main():

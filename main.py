@@ -1,11 +1,11 @@
 """
 Contestant control software skeleton.
 
-Session handshake order matters with udpin/udpout:
-  1. Send one heartbeat so the sim's udpin socket learns our return address.
-  2. Block on wait_heartbeat() to confirm the sim is up before commanding.
-  3. Keep heartbeats alive in the background throughout the session.
-  4. Drain telemetry in a dedicated thread — never block the control loop on recv.
+UDP handshake order:
+  1. send_once() so the sim's udpin learns our return address.
+  2. wait_heartbeat() before commanding.
+  3. hb.start() to maintain the session.
+  4. Telemetry runs in a dedicated thread — control loop never blocks on recv.
 """
 
 import os
@@ -19,18 +19,9 @@ os.environ["MAVLINK20"] = "1"
 from pymavlink import mavutil  # noqa: E402
 from pymavlink.dialects.v20 import common as mavlink_dialect  # noqa: E402
 
-# ---------------------------------------------------------------------------
-# Timing constants
-# ---------------------------------------------------------------------------
-
-HB_RATE_HZ: float = 2.0  # minimum; increase if the sim drops connection
-COMMAND_RATE_HZ: float = 120.0  # sim physics runs at 120 Hz — match it
+HB_RATE_HZ: float = 2.0
+COMMAND_RATE_HZ: float = 120.0
 HEARTBEAT_TIMEOUT_S: float = 10.0
-
-
-# ---------------------------------------------------------------------------
-# Shared vehicle state
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -59,168 +50,142 @@ class VehicleState:
     ygyro: float = 0.0
     zgyro: float = 0.0
 
-    # Signed offset: sim_clock_ns - local_clock_ns. Use to correlate
-    # sim timestamps in telemetry with your own timing if needed.
+    # sim_clock_ns - local_clock_ns
     time_offset_ns: Optional[int] = None
 
-    # Flip these to False after consuming if you want edge-triggered logic.
-    attitude_updated: bool = False
-    odometry_updated: bool = False
-    imu_updated: bool = False
-
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, compare=False, repr=False
+    )
 
 
-# ---------------------------------------------------------------------------
-# Heartbeat thread
-# ---------------------------------------------------------------------------
+class HeartbeatSender:
+    def __init__(self, master: mavutil.mavfile, rate_hz: float = HB_RATE_HZ) -> None:
+        self._master = master
+        self._interval = 1.0 / rate_hz
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
 
+    def send_once(self) -> None:
+        self._send()
 
-def start_heartbeat(master: mavutil.mavfile, rate_hz: float = HB_RATE_HZ) -> None:
-    """
-    Keeps the sim from considering us disconnected.
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._loop, daemon=True, name="heartbeat"
+        )
+        self._thread.start()
 
-    Sleeps one full interval before the first send — the caller already sent
-    the bootstrap heartbeat in main(), so firing immediately would double-up.
-    """
-    interval = 1.0 / rate_hz
+    def stop(self, timeout: float = 2.0) -> None:
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=timeout)
 
-    def _loop() -> None:
-        while True:
-            time.sleep(interval)
-            master.mav.heartbeat_send(
-                mavlink_dialect.MAV_TYPE_GCS,
-                mavlink_dialect.MAV_AUTOPILOT_INVALID,
-                0,
-                0,
-                mavlink_dialect.MAV_STATE_ACTIVE,
-            )
+    def _send(self) -> None:
+        self._master.mav.heartbeat_send(
+            mavlink_dialect.MAV_TYPE_GCS,
+            mavlink_dialect.MAV_AUTOPILOT_INVALID,
+            0,
+            0,
+            mavlink_dialect.MAV_STATE_ACTIVE,
+        )
 
-    threading.Thread(target=_loop, daemon=True, name="heartbeat").start()
-
-
-# ---------------------------------------------------------------------------
-# Telemetry thread
-# ---------------------------------------------------------------------------
+    def _loop(self) -> None:
+        while not self._stop_event.wait(timeout=self._interval):
+            try:
+                self._send()
+            except Exception as exc:  # noqa: BLE001
+                print(f"[HEARTBEAT] Send failed: {exc}")
 
 
 def start_telemetry(master: mavutil.mavfile, state: VehicleState) -> None:
-    """
-    Blocking recv loop in its own thread — keeps the control loop free of I/O.
-
-    All message types the sim emits are handled here. Unrecognised types are
-    dropped silently; add cases as needed.
-    """
-
     def _loop() -> None:
         while True:
-            msg = master.recv_match(blocking=True, timeout=1.0)
-            if msg is None:
-                continue
+            try:
+                msg = master.recv_match(blocking=True, timeout=1.0)
+                if msg is None:
+                    continue
 
-            msg_type = msg.get_type()
+                msg_type = msg.get_type()
 
-            if msg_type == "ATTITUDE":
-                with state._lock:
-                    state.roll = msg.roll
-                    state.pitch = msg.pitch
-                    state.yaw = msg.yaw
-                    state.rollspeed = msg.rollspeed
-                    state.pitchspeed = msg.pitchspeed
-                    state.yawspeed = msg.yawspeed
-                    state.attitude_updated = True
+                if msg_type == "ATTITUDE":
+                    with state._lock:
+                        state.roll = msg.roll
+                        state.pitch = msg.pitch
+                        state.yaw = msg.yaw
+                        state.rollspeed = msg.rollspeed
+                        state.pitchspeed = msg.pitchspeed
+                        state.yawspeed = msg.yawspeed
 
-            elif msg_type == "ODOMETRY":
-                with state._lock:
-                    state.x = msg.x
-                    state.y = msg.y
-                    state.z = msg.z
-                    state.vx = msg.vx
-                    state.vy = msg.vy
-                    state.vz = msg.vz
-                    state.odometry_updated = True
+                elif msg_type == "ODOMETRY":
+                    with state._lock:
+                        state.x = msg.x
+                        state.y = msg.y
+                        state.z = msg.z
+                        state.vx = msg.vx
+                        state.vy = msg.vy
+                        state.vz = msg.vz
 
-            elif msg_type == "HIGHRES_IMU":
-                with state._lock:
-                    state.xacc = msg.xacc
-                    state.yacc = msg.yacc
-                    state.zacc = msg.zacc
-                    state.xgyro = msg.xgyro
-                    state.ygyro = msg.ygyro
-                    state.zgyro = msg.zgyro
-                    state.imu_updated = True
+                elif msg_type == "HIGHRES_IMU":
+                    with state._lock:
+                        state.xacc = msg.xacc
+                        state.yacc = msg.yacc
+                        state.zacc = msg.zacc
+                        state.xgyro = msg.xgyro
+                        state.ygyro = msg.ygyro
+                        state.zgyro = msg.zgyro
 
-            elif msg_type == "TIMESYNC":
-                # ts1 is sim time in nanoseconds. Store the offset in case
-                # you need to correlate your timestamps with sim-relative time.
-                local_ns = int(time.time() * 1e9)
-                with state._lock:
-                    state.time_offset_ns = msg.ts1 - local_ns
+                elif msg_type == "TIMESYNC":
+                    local_ns = int(time.time() * 1e9)
+                    with state._lock:
+                        state.time_offset_ns = msg.ts1 - local_ns
 
-            elif msg_type in ("HEARTBEAT", "BAD_DATA"):
-                pass
+                elif msg_type in ("HEARTBEAT", "BAD_DATA"):
+                    pass
+
+            except Exception as exc:  # noqa: BLE001
+                print(f"[TELEMETRY] Recv error: {exc}")
 
     threading.Thread(target=_loop, daemon=True, name="telemetry").start()
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 
 def main() -> None:
     master = cast(
         mavutil.mavfile,
-        mavutil.mavlink_connection(
-            "udpout:localhost:14540",
-            source_system=255,
-        ),
+        mavutil.mavlink_connection("udpout:localhost:14540", source_system=255),
     )
 
-    # udpin won't know where to send until it receives a datagram from us —
-    # send one heartbeat to punch the return path open before blocking on recv.
-    master.mav.heartbeat_send(
-        mavlink_dialect.MAV_TYPE_GCS,
-        mavlink_dialect.MAV_AUTOPILOT_INVALID,
-        0,
-        0,
-        mavlink_dialect.MAV_STATE_ACTIVE,
-    )
+    hb = HeartbeatSender(master, rate_hz=HB_RATE_HZ)
+    hb.send_once()
 
     print(f"[CTRL] Waiting for simulator heartbeat (timeout={HEARTBEAT_TIMEOUT_S}s)...")
-    hb = master.wait_heartbeat(timeout=HEARTBEAT_TIMEOUT_S)
-    if hb is None:
+    hb_msg = master.wait_heartbeat(timeout=HEARTBEAT_TIMEOUT_S)
+    if hb_msg is None:
         raise RuntimeError(
             f"No heartbeat from simulator within {HEARTBEAT_TIMEOUT_S}s — "
             "is mock_vehicle.py running?"
         )
     print(
-        f"[CTRL] Connected — "
-        f"sysid={master.target_system} compid={master.target_component}"
+        f"[CTRL] Connected — sysid={master.target_system} compid={master.target_component}"
     )
+
+    hb.start()
 
     _boot_time = time.time()
 
     def time_boot_ms() -> int:
-        return int((time.time() - _boot_time) * 1000) & 0xFFFFFFFF
-
-    start_heartbeat(master, rate_hz=HB_RATE_HZ)
+        return int((time.time() - _boot_time) * 1000) % (2**32)
 
     state = VehicleState()
     start_telemetry(master, state)
 
-    # ------------------------------------------------------------------
-    # Control loop
-    # ------------------------------------------------------------------
     loop_interval = 1.0 / COMMAND_RATE_HZ
-
     print(f"[CTRL] Control loop running at {COMMAND_RATE_HZ:.0f} Hz.")
 
     while True:
         loop_start = time.time()
 
-        # Snapshot telemetry — hold the lock only for the copy, not across
-        # the send call below.
         with state._lock:
             roll = state.roll
             pitch = state.pitch
@@ -228,10 +193,18 @@ def main() -> None:
             x = state.x
             y = state.y
             z = state.z
+            vx = state.vx
+            vy = state.vy
+            vz = state.vz
+            xacc = state.xacc
+            yacc = state.yacc
+            zacc = state.zacc
+            xgyro = state.xgyro
+            ygyro = state.ygyro
+            zgyro = state.zgyro
 
         # ----------------------------------------------------------------
-        # Your pipeline goes here:
-        #   Vision + Telemetry → Perception → Planning → Control
+        # Vision + Telemetry → Perception → Planning → Control
         # ----------------------------------------------------------------
         target_x = 10.0
         target_y = 0.0
@@ -242,7 +215,7 @@ def main() -> None:
             target_system=master.target_system,
             target_component=master.target_component,
             coordinate_frame=mavlink_dialect.MAV_FRAME_LOCAL_NED,
-            type_mask=0b0000111111111000,  # position only; ignore velocity/accel/yaw
+            type_mask=0b0000111111111000,  # position only
             x=target_x,
             y=target_y,
             z=target_z,
