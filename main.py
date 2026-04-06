@@ -164,7 +164,7 @@ def main() -> None:
     if hb_msg is None:
         raise RuntimeError(
             f"No heartbeat from simulator within {HEARTBEAT_TIMEOUT_S}s — "
-            "is mock_vehicle.py running?"
+            "is sim.py running?"
         )
     print(
         f"[CTRL] Connected — sysid={master.target_system} compid={master.target_component}"
